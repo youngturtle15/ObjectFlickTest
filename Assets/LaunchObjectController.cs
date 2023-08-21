@@ -6,31 +6,31 @@ using UnityEngine;
 public class LaunchObjectController : MonoBehaviour
 {
     [SerializeField]
-    private float speedMultiplier;
+    private TMP_Text statusText;
     [SerializeField]
     private GameObject launchObjectPrefab;
     [SerializeField]
-    private TMP_Text phaseText;
+    private float distanceFromCam;
     [SerializeField]
-    private float throwForce;
+    private float throwThreshold;
+    [SerializeField]
+    private float throwMultiplier;
 
     private Camera cam;
     private GameObject launchObject = null;
     private bool isObjectLaunched = false;
-    private Vector3 startPos;
-    private Vector3 endPos;
-    private Vector3 swipeForce;
-    private float startTime;
-    private float endTime;
     private Rigidbody rb;
-    
-    private int fingerId = -1;
+    private float queueCapacity;
+    private Queue<Vector2> posQueue = new Queue<Vector2>();
+    private Vector2 startVector;
+    private Vector2 endVector;
 
     void Start()
     {
+        queueCapacity = 0.1f / Time.deltaTime;
         cam = Camera.main;
         launchObject = Instantiate(launchObjectPrefab);
-        launchObject.transform.position = cam.ScreenToWorldPoint(new Vector3(Screen.width * 0.5f, Screen.height * 0.2f, 10));
+        launchObject.transform.position = cam.ScreenToWorldPoint(new Vector3(Screen.width * 0.5f, Screen.height * 0.2f, distanceFromCam));
         rb = launchObject.GetComponent<Rigidbody>();
     }
 
@@ -43,58 +43,46 @@ public class LaunchObjectController : MonoBehaviour
 
     void UpdateObjectPosition()
     {
-        if (Input.touchCount == 0 || isObjectLaunched)
+        if (isObjectLaunched)
         {
             return;
         }
 
-        Touch touch;
-
-        if (fingerId == -1)
+        if (Input.touchCount == 0)
         {
-            touch = Input.GetTouch(0);
-            fingerId = touch.fingerId;
+            launchObject.transform.position = cam.ScreenToWorldPoint(new Vector3(Screen.width * 0.5f, Screen.height * 0.2f, distanceFromCam));
+            return;
         }
         else
         {
-            if (!TryGetTouch(fingerId, out touch))
+            Touch touch = Input.GetTouch(0);
+            switch (touch.phase)
             {
-                touch = Input.GetTouch(0);
-                fingerId = touch.fingerId;
+                case TouchPhase.Began:
+                    launchObject.transform.position = cam.ScreenToWorldPoint(new Vector3(touch.position.x, touch.position.y, distanceFromCam));
+                    AddPosition(touch.position);
+                    break;
+                case TouchPhase.Stationary:
+                    launchObject.transform.position = cam.ScreenToWorldPoint(new Vector3(touch.position.x, touch.position.y, distanceFromCam));
+                    AddPosition(touch.position);
+                    break;
+                case TouchPhase.Moved:
+                    launchObject.transform.position = cam.ScreenToWorldPoint(new Vector3(touch.position.x, touch.position.y, distanceFromCam));
+                    AddPosition(touch.position);
+                    break;
+                case TouchPhase.Ended:
+                    Vector2 swipeVector = endVector - startVector;
+                    statusText.text = $"Start Pos: {startVector}\nEnd Pos: {endVector}\nMagnitude: {swipeVector.magnitude}";
+                    if (swipeVector.magnitude > throwThreshold)
+                    {
+                        rb.isKinematic = false;
+                        isObjectLaunched = true;
+                        Vector3 forceVector = new Vector3(swipeVector.x, swipeVector.y * throwMultiplier, swipeVector.magnitude * throwMultiplier);
+                        rb.AddForce(forceVector);
+                        Destroy(launchObject, 3.0f);
+                    }
+                    break;
             }
-        }
-
-        TouchPhase touchPhase = touch.phase;
-        phaseText.text = touchPhase.ToString();
-
-        if (touchPhase == TouchPhase.Began || touchPhase == TouchPhase.Stationary)
-        {
-            startPos = touch.position;
-            startPos.z = launchObject.transform.position.z - cam.transform.position.z;
-            startPos = cam.ScreenToWorldPoint(startPos);
-            startTime = Time.time;
-            rb.isKinematic = false;
-        }
-
-        if (touchPhase == TouchPhase.Stationary || touchPhase == TouchPhase.Moved)
-        {
-            // get the touch position from the screen touch to world point
-            Vector3 touchedPos = cam.ScreenToWorldPoint(new Vector3(touch.position.x, touch.position.y, 10));
-            launchObject.transform.position = touchedPos;
-        }
-        else if (touchPhase == TouchPhase.Ended)
-        {
-            isObjectLaunched = true;
-            endPos = touch.position;
-            endPos.z = launchObject.transform.position.z - cam.transform.position.z;
-            endPos = cam.ScreenToWorldPoint(endPos);
-            endTime = Time.time;
-            swipeForce = (endPos - startPos);
-            swipeForce.z = swipeForce.magnitude;
-            swipeForce /= (endTime - startTime);
-            rb.AddForce(swipeForce * throwForce);
-            Destroy(launchObject, 3.0f);
-            fingerId = -1;
         }
     }
 
@@ -107,23 +95,28 @@ public class LaunchObjectController : MonoBehaviour
 
         isObjectLaunched = false;
         launchObject = Instantiate(launchObjectPrefab);
-        launchObject.transform.position = cam.ScreenToWorldPoint(new Vector3(Screen.width * 0.5f, Screen.height * 0.2f, 10));
+        launchObject.transform.position = cam.ScreenToWorldPoint(new Vector3(Screen.width * 0.5f, Screen.height * 0.2f, distanceFromCam));
         rb = launchObject.GetComponent<Rigidbody>();
     }
 
-    private static bool TryGetTouch(int fingerID, out Touch touch)
+    void AddPosition(Vector2 newPos)
     {
-        foreach (var t in Input.touches)
+        if (posQueue.Count < queueCapacity)
         {
-            if (t.fingerId == fingerID)
+            if (posQueue.Count > 1)
             {
-                touch = t;
-                return true;
+                startVector = posQueue.Peek();
+                endVector = newPos;
             }
+            posQueue.Enqueue(newPos);
         }
-
-        // No touch with given ID exists
-        touch = default;
-        return false;
+        else
+        {
+            posQueue.Dequeue();
+            startVector = posQueue.Peek();
+            endVector = newPos;
+            posQueue.Enqueue(newPos);
+        }
     }
 }
+
